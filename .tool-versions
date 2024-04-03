@@ -1,0 +1,3 @@
+# Config for the `asdf` package manager.
+erlang 26.2
+rebar 3.22.1

@@ -1,0 +1,12 @@
+{application, erlang_tools, [
+    {description, "Tools for Erlang"},
+    {vsn, git},
+    {registered, [erlang_tools]},
+    {mod, {erlang_tools, {}}},
+    {applications, [
+        kernel,
+        stdlib,
+        sasl,
+        lager
+    ]}
+]}.
