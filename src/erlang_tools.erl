@@ -71,4 +71,4 @@ stop({}) ->
 %%
 %%  Default values for configuration parameters
 %%
-get_default(todo) -> todo.
+get_default(single_indent_length) -> 2.
