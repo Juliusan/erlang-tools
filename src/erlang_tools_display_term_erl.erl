@@ -50,7 +50,15 @@ to_binary_indent(List, Indent) when is_list(List) ->
     end;
 
 to_binary_indent(Tuple, Indent) when is_tuple(Tuple) ->
-    to_binary_indent_list(erlang:tuple_to_list(Tuple), <<"{">>, <<"}">>, fun to_binary_indent/2, Indent).
+    to_binary_indent_list(erlang:tuple_to_list(Tuple), <<"{">>, <<"}">>, fun to_binary_indent/2, Indent);
+
+to_binary_indent(Map, Indent) when is_map(Map) ->
+    RecordToBinFun = fun({Key, Value}, I) ->
+        KeyBin = to_binary_indent(Key, I),
+        ValueBin = to_binary_indent(Value, I),
+        <<KeyBin/binary, " => ", ValueBin/binary>>
+    end,
+    to_binary_indent_list(lists:sort(maps:to_list(Map)), <<"#{">>, <<"}">>, RecordToBinFun, Indent).
 
 
 to_binary_indent_list([], StartBin, EndBin, _ElemToBinFun, _Indent) ->
@@ -109,22 +117,37 @@ to_binary_test_() ->
             "      \"geras\"\n",
             "    }\n",
             "  ],\n",
+            "  #{\n",
+            "    a_pirmas => antras,\n",
+            "    b_trecias => 123,\n",
+            "    c_ketvirtas => [\n",
+            "      a,\n",
+            "      b,\n",
+            "      c\n",
+            "    ],\n",
+            "    d_penktas => {\n",
+            "      d,\n",
+            "      e\n",
+            "    }\n",
+            "  },\n",
             "  2.3,\n",
             "  <<\"sula\">>,\n",
             "  sula\n",
-            "]">>, to_binary([321, "alus", [alus, 456, 1.2, "sula", <<"alus">>, {555, "geras"}], 2.3, <<"sula">>, sula])),
+            "]">>, to_binary([321, "alus", [alus, 456, 1.2, "sula", <<"alus">>, {555, "geras"}], #{a_pirmas => antras, b_trecias => 123, c_ketvirtas => [a,b,c], d_penktas => {d,e}}, 2.3, <<"sula">>, sula])),
         ?_assertEqual(<<"[[]]">>, to_binary([[]])),
         ?_assertEqual(<<"[{}]">>, to_binary([{}])),
+        ?_assertEqual(<<"[#{}]">>, to_binary([#{}])),
         ?_assertEqual(<<"{[]}">>, to_binary({[]})),
         ?_assertEqual(<<"{{}}">>, to_binary({{}})),
+        ?_assertEqual(<<"{#{}}">>, to_binary({#{}})),
+        ?_assertEqual(<<"#{[] => []}">>, to_binary(#{[] => []})),
+        ?_assertEqual(<<"#{{} => {}}">>, to_binary(#{{} => {}})),
+        ?_assertEqual(<<"#{#{} => #{}}">>, to_binary(#{#{} => #{}})),
         ?_assertEqual(<<"[[alus]]">>, to_binary([[alus]])),
-        ?_assertEqual(<<"[{123}]">>, to_binary([{123}])),
-        ?_assertEqual(<<"{[\"labas\"]}">>, to_binary({["labas"]})),
         ?_assertEqual(<<"{{2.3}}">>, to_binary({{2.3}})),
+        ?_assertEqual(<<"#{\"petras\" => <<\"jonas\">>}">>, to_binary(#{"petras" => <<"jonas">>})),
         ?_assertEqual(<<"[[\n  alus,\n  123\n]]">>, to_binary([[alus, 123]])),
-        ?_assertEqual(<<"[{\n  123,\n  \"labas\"\n}]">>, to_binary([{123, "labas"}])),
-        ?_assertEqual(<<"{[\n  \"labas\",\n  2.3\n]}">>, to_binary({["labas", 2.3]})),
-        ?_assertEqual(<<"{{\n  2.3,\n  alus\n}}">>, to_binary({{2.3, alus}})),
+        ?_assertEqual(<<"{{\n  2.3,\n  \"labas\"\n}}">>, to_binary({{2.3, "labas"}})),
         ?_assertEqual(<<
             "{\n",
             "  a,\n",
@@ -160,7 +183,25 @@ to_binary_test_() ->
             "    f\n",
             "  ]]],\n",
             "  c\n",
-            "]">>, to_binary([a,b,[[[d,e,f]]],c]))
+            "]">>, to_binary([a,b,[[[d,e,f]]],c])),
+        ?_assertEqual(<<
+            "#{\n",
+            "  a => b,\n",
+            "  c => d,\n",
+            "  e => #{f => #{g => #{h => i}}},\n",
+            "  j => k\n",
+            "}">>, to_binary(#{a => b, c => d, e => #{f => #{g => #{h => i}}}, j => k})),
+        ?_assertEqual(<<
+            "#{\n",
+            "  a => b,\n",
+            "  c => d,\n",
+            "  e => #{f => #{g => #{\n",
+            "    h => i,\n",
+            "    j => k,\n",
+            "    l => m\n",
+            "  }}},\n",
+            "  n => o\n",
+            "}">>, to_binary(#{a => b, c => d, e => #{f => #{g => #{h => i, j => k, l => m}}}, n => o}))
     ].
 
 
