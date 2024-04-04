@@ -9,9 +9,44 @@
 %%
 %%
 -ignore_xref([
-    {?MODULE, to_binary, 1}
+    {?MODULE, to_binary, 1},    % Can be called by external users
+    {?MODULE, to_binary, 2}     % Can be called by external users
 ]).
 
+
+%%
+%%  Used to address specific parts of Erlang term. E.g.:
+%%    * [2] matches second element of any list/tuple: [a, this, b, c] or {a, this, b}.
+%%    * [key] matches map entry with key 'key': #{a => b, key => this}.
+%%    * [3, 2, key, 1] if term is a list/tuple, which third element is a list/tuple,
+%%      which second element is a map, which has entry with 'key' as a key, which
+%%      has a list/tuple as a value, then matches the first element of this list/tuple:
+%%      [a, [b,c], {d, #{e => f, key => [this, g, h, i]}, j}].
+%%    * [2, [1, 3]] if term is a list/tuple, which second element is list/tuple,
+%%      then matches first and third elements of this list/tuple.
+%%    * [2, '*'] if term is a list/tuple, which second element is list/tuple,
+%%      then matches all the elements of this list/tuple.
+%%    * [2, {1, 3}] if term is a list/tuple, which second element is list/tuple,
+%%      then matches first, second and third elements of this list/tuple.
+%%
+-type term_path() ::
+    [ term_path_segment() ].
+
+-type term_path_segment() ::
+    term_path_segment_element() |
+    [ Element :: term_path_segment_element() ].    % Matches if name matches at least one Element
+
+-type term_path_segment_element() ::
+    Anything :: '*' |                                   % Matches any name
+    Name     :: term_path_segment_element_name() |      % Matches only exactly the same name
+    {                                                   % Matches any name between 'From' and 'To' (inclusive)
+        From :: term_path_segment_element_name(),
+        To   :: term_path_segment_element_name()
+    }.
+
+-type term_path_segment_element_name() ::
+    Index  :: integer() |   % Used to name list or tuple elements
+    MapKey :: term().       % Used to name map entries
 
 
 %%% ============================================================================
@@ -19,8 +54,33 @@
 %%% ============================================================================
 
 
+%%
+%%  Converts term to pretty formatted binary. All the list entries/tuple elements/
+%%  map key-value pairs are displayed on a separate line with larger indentation
+%%  than term, which contains the list/tuple/map. The exception is lists/tuples/maps,
+%%  which contain exactly one element (the element is not displayed on a separate
+%%  line) or none elements at all (displayed in a single line). Number of spaces,
+%%  used in single indent, can be configured in `single_indent_length' application
+%%  parameter.
+%%  Optional `NoExpand' parameter may be used to list all the paths in the term,
+%%  which should not be expanded to separate lines. All the paths listed in this
+%%  parameter will be displayed on a single line, ignoring the amount of nested
+%%  lists/tuples/maps.
+%%  See: test cases in `to_binary_test_/0'
+%%
+-spec to_binary(
+    Term :: term()
+) ->
+    binary().
+
 to_binary(Term) ->
     to_binary(Term, []).
+
+-spec to_binary(
+    Term :: term(),
+    NoExpands :: [ term_path() ]
+) ->
+    binary().
 
 to_binary(Term, NoExpands) ->
     to_binary_indent(Term, 0, NoExpands).
@@ -31,6 +91,9 @@ to_binary(Term, NoExpands) ->
 %%% ============================================================================
 
 
+%%
+%%
+%%
 to_binary_indent(Atom, _Indent, _NoExpands) when is_atom(Atom) ->
     erlang:atom_to_binary(Atom);
 
@@ -67,6 +130,9 @@ to_binary_indent(Map, Indent, NoExpands) when is_map(Map) ->
     to_binary_indent_list(IndexedList, <<"#{">>, <<"}">>, RecordToBinFun, Indent, NoExpands).
 
 
+%%
+%%
+%%
 to_binary_indent_list(List, StartBin, EndBin, ElemToBinFun, Indent, NoExpands) ->
     DoExpand = case {erlang:length(List), NoExpands} of
         {N, _        } when N =< 1 -> false;
@@ -92,12 +158,18 @@ to_binary_indent_list(List, StartBin, EndBin, ElemToBinFun, Indent, NoExpands) -
     end.
 
 
+%%
+%%
+%%
 get_indent(Count) ->
     SingleIndentLength = erlang_tools:get_env(single_indent_length),
     Length = SingleIndentLength*Count,
     erlang:iolist_to_binary(lists:duplicate(Length, <<" ">>)).
 
 
+%%
+%%
+%%
 filter_no_expands(_Name, undefined) ->
     undefined;
 
@@ -108,7 +180,7 @@ filter_no_expands(_Name, [], AccNoExpands) ->
     lists:reverse(AccNoExpands);
 
 filter_no_expands(Name, [[Segment]|Others], AccNoExpands) ->
-    NewApplies = case matches_no_expand_segment(Name, Segment) of
+    case matches_no_expand_segment(Name, Segment) of
         true  -> undefined;
         false -> filter_no_expands(Name, Others, AccNoExpands)
     end;
@@ -121,6 +193,9 @@ filter_no_expands(Name, [[Segment|OtherSegments]|Others], AccNoExpands) ->
     filter_no_expands(Name, Others, NewAccNoExpands).
 
 
+%%
+%%
+%%
 matches_no_expand_segment(_Name, []     )                                      -> false;
 matches_no_expand_segment(_Name, ['*'|_])                                      -> true;
 matches_no_expand_segment(Name,  [Name|_])                                     -> true;
@@ -305,7 +380,7 @@ filter_no_expands_test_() ->
         ?_assertEqual(undefined,                     filter_no_expands(1, [[2],[1],[3]])),
         ?_assertEqual(undefined,                     filter_no_expands(1, [[2,1,3],[1],[1,2,3]])),
         ?_assertEqual(undefined,                     filter_no_expands(1, [[1,2,3],[1],[2,1,3]])),
-        ?_assertEqual([[2,3],[3,3],[1,1],[2,2],[4]], filter_no_expands(1, [[1,2,3],[2,1,3],['*',3,3],[{0,5},1,1],[[{2,4},1],2,2],[[{2,4},{0,1}],4]]))
+        ?_assertEqual([[2,3],[3,3],[1,1],[2,2],[4]], filter_no_expands(1, [[1,2,3],[2,1,3],['*',3,3],[{0,5},1,1],[[{3,4},1],2,2],[[{2,4},{0,1}],4]]))
     ].
 
 -endif.
