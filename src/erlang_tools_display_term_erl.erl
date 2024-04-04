@@ -3,7 +3,7 @@
 %%%
 -module(erlang_tools_display_term_erl).
 -compile([{parse_transform, lager_transform}]).
--export([to_binary/1]).
+-export([to_binary/1, to_binary/2]).
 
 %%
 %%
@@ -20,7 +20,10 @@
 
 
 to_binary(Term) ->
-    to_binary_indent(Term, 0).
+    to_binary(Term, []).
+
+to_binary(Term, NoExpands) ->
+    to_binary_indent(Term, 0, NoExpands).
 
 
 %%% ============================================================================
@@ -28,54 +31,65 @@ to_binary(Term) ->
 %%% ============================================================================
 
 
-to_binary_indent(Atom, _Indent) when is_atom(Atom) ->
+to_binary_indent(Atom, _Indent, _NoExpands) when is_atom(Atom) ->
     erlang:atom_to_binary(Atom);
 
-to_binary_indent(Integer, _Indent) when is_integer(Integer) ->
+to_binary_indent(Integer, _Indent, _NoExpands) when is_integer(Integer) ->
     erlang:integer_to_binary(Integer);
 
-to_binary_indent(Float, _Indent) when is_float(Float) ->
+to_binary_indent(Float, _Indent, _NoExpands) when is_float(Float) ->
     erlang:float_to_binary(Float, [short]);
 
-to_binary_indent(Binary, _Indent) when is_binary(Binary) ->
+to_binary_indent(Binary, _Indent, _NoExpands) when is_binary(Binary) ->
     <<"<<\"", Binary/binary, "\">>">>;
 
-to_binary_indent(List, Indent) when is_list(List) ->
+to_binary_indent(List, Indent, NoExpands) when is_list(List) ->
     case {List, io_lib:printable_unicode_list(List)} of
         {[_|_], true} ->
             ListBin = erlang:list_to_binary(List),
             <<"\"", ListBin/binary, "\"">>;
         {_, _} ->
-            to_binary_indent_list(List, <<"[">>, <<"]">>, fun to_binary_indent/2, Indent)
+            IndexedList = lists:zip(lists:seq(1, erlang:length(List)), List),
+            to_binary_indent_list(IndexedList, <<"[">>, <<"]">>, fun to_binary_indent/3, Indent, NoExpands)
     end;
 
-to_binary_indent(Tuple, Indent) when is_tuple(Tuple) ->
-    to_binary_indent_list(erlang:tuple_to_list(Tuple), <<"{">>, <<"}">>, fun to_binary_indent/2, Indent);
+to_binary_indent(Tuple, Indent, NoExpands) when is_tuple(Tuple) ->
+    IndexedList = lists:zip(lists:seq(1, erlang:size(Tuple)), erlang:tuple_to_list(Tuple)),
+    to_binary_indent_list(IndexedList, <<"{">>, <<"}">>, fun to_binary_indent/3, Indent, NoExpands);
 
-to_binary_indent(Map, Indent) when is_map(Map) ->
-    RecordToBinFun = fun({Key, Value}, I) ->
-        KeyBin = to_binary_indent(Key, I),
-        ValueBin = to_binary_indent(Value, I),
+to_binary_indent(Map, Indent, NoExpands) when is_map(Map) ->
+    RecordToBinFun = fun({Key, Value}, I, NE) ->
+        KeyBin = to_binary_indent(Key, I, NE),
+        ValueBin = to_binary_indent(Value, I, NE),
         <<KeyBin/binary, " => ", ValueBin/binary>>
     end,
-    to_binary_indent_list(lists:sort(maps:to_list(Map)), <<"#{">>, <<"}">>, RecordToBinFun, Indent).
+    IndexedList = [ {Key, {Key, Value}} || {Key, Value} <- lists:sort(maps:to_list(Map)) ],
+    to_binary_indent_list(IndexedList, <<"#{">>, <<"}">>, RecordToBinFun, Indent, NoExpands).
 
 
-to_binary_indent_list([], StartBin, EndBin, _ElemToBinFun, _Indent) ->
-    <<StartBin/binary, EndBin/binary>>;
-
-to_binary_indent_list([Elem], StartBin, EndBin, ElemToBinFun, Indent) ->
-    ElemBin = ElemToBinFun(Elem, Indent),
-    <<StartBin/binary, ElemBin/binary, EndBin/binary>>;
-
-to_binary_indent_list(List = [_,_|_], StartBin, EndBin, ElemToBinFun, Indent) ->
-    IndentThisBin = get_indent(Indent),
-    IndentNextBin = get_indent(Indent+1),
-    ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
-        ElemBin = ElemToBinFun(Elem, Indent+1),
-        <<IndentNextBin/binary, ElemBin/binary>>
-    end, List))),
-    <<StartBin/binary, "\n", ListConverted/binary, "\n", IndentThisBin/binary, EndBin/binary>>.
+to_binary_indent_list(List, StartBin, EndBin, ElemToBinFun, Indent, NoExpands) ->
+    DoExpand = case {erlang:length(List), NoExpands} of
+        {N, _        } when N =< 1 -> false;
+        {_, undefined}             -> false;
+        {_, _        }             -> true
+    end,
+    case DoExpand of
+        true ->
+            IndentThisBin = get_indent(Indent),
+            IndentNextBin = get_indent(Indent+1),
+            ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun({Name, Elem}) ->
+                NewNoExpands = filter_no_expands(Name, NoExpands),
+                ElemBin = ElemToBinFun(Elem, Indent+1, NewNoExpands),
+                <<IndentNextBin/binary, ElemBin/binary>>
+            end, List))),
+            <<StartBin/binary, "\n", ListConverted/binary, "\n", IndentThisBin/binary, EndBin/binary>>;
+        false ->
+            ListConverted = erlang:iolist_to_binary(lists:join(<<", ">>, lists:map(fun({Name, Elem}) ->
+                NewNoExpands = filter_no_expands(Name, NoExpands),
+                ElemToBinFun(Elem, Indent, NewNoExpands)
+            end, List))),
+            <<StartBin/binary, ListConverted/binary, EndBin/binary>>
+    end.
 
 
 get_indent(Count) ->
@@ -83,6 +97,36 @@ get_indent(Count) ->
     Length = SingleIndentLength*Count,
     erlang:iolist_to_binary(lists:duplicate(Length, <<" ">>)).
 
+
+filter_no_expands(_Name, undefined) ->
+    undefined;
+
+filter_no_expands(Name, NoExpands) ->
+    filter_no_expands(Name, NoExpands, []).
+
+filter_no_expands(_Name, [], AccNoExpands) ->
+    lists:reverse(AccNoExpands);
+
+filter_no_expands(Name, [[Segment]|Others], AccNoExpands) ->
+    NewApplies = case matches_no_expand_segment(Name, Segment) of
+        true  -> undefined;
+        false -> filter_no_expands(Name, Others, AccNoExpands)
+    end;
+
+filter_no_expands(Name, [[Segment|OtherSegments]|Others], AccNoExpands) ->
+    NewAccNoExpands = case matches_no_expand_segment(Name, Segment) of
+        true  -> [OtherSegments|AccNoExpands];
+        false -> AccNoExpands
+    end,
+    filter_no_expands(Name, Others, NewAccNoExpands).
+
+
+matches_no_expand_segment(_Name, []     )                                      -> false;
+matches_no_expand_segment(_Name, ['*'|_])                                      -> true;
+matches_no_expand_segment(Name,  [Name|_])                                     -> true;
+matches_no_expand_segment(Name,  [{From, To}|_]) when From =< Name, Name =< To -> true;
+matches_no_expand_segment(Name,  [_|Others])                                   -> matches_no_expand_segment(Name, Others);
+matches_no_expand_segment(Name,  NotAList)                                     -> matches_no_expand_segment(Name, [NotAList]).
 
 
 %%% ============================================================================
@@ -201,8 +245,67 @@ to_binary_test_() ->
             "    l => m\n",
             "  }}},\n",
             "  n => o\n",
-            "}">>, to_binary(#{a => b, c => d, e => #{f => #{g => #{h => i, j => k, l => m}}}, n => o}))
+            "}">>, to_binary(#{a => b, c => d, e => #{f => #{g => #{h => i, j => k, l => m}}}, n => o})),
+        ?_assertEqual(<<"[\n  a,\n  b,\n  [c, d, e],\n  f\n]">>, to_binary([a, b, [c, d, e], f], [[3]])),
+        ?_assertEqual(<<"[\n  a,\n  b,\n  [[c, d, e]],\n  f\n]">>, to_binary([a, b, [[c, d, e]], f], [[3,1]])),
+        ?_assertEqual(<<
+            "[\n",
+            "  a,\n",
+            "  [[c, d], [e, f, g]],\n",
+            "  i,\n",
+            "  [\n",
+            "    [j, [k, l], m],\n",
+            "    [\n",
+            "      n,\n",
+            "      o\n",
+            "    ],\n",
+            "    [p, r, s],\n",
+            "    [t, u]\n",
+            "  ]\n",
+            "]">>, to_binary([a, [[c, d], [e, f, g]], i, [[j, [k, l], m], [n, o], [p, r, s], [t, u]]], [[2], [4, [1,{3,4}]]])),
+        ?_assertEqual(<<
+            "{\n",
+            "  a,\n",
+            "  {{c, d}, {e, f, g}},\n",
+            "  i,\n",
+            "  {\n",
+            "    {j, {k, l}, m},\n",
+            "    {\n",
+            "      n,\n",
+            "      o\n",
+            "    },\n",
+            "    {p, r, s},\n",
+            "    {t, u}\n",
+            "  }\n",
+            "}">>, to_binary({a, {{c, d}, {e, f, g}}, i, {{j, {k, l}, m}, {n, o}, {p, r, s}, {t, u}}}, [[2], [4, [1,{3,4}]]])),
+        ?_assertEqual(<<
+            "#{\n",
+            "  a => b,\n",
+            "  p => r,\n",
+            "  s => #{\n",
+            "    t => [1, 2, 3],\n",
+            "    u => [\n",
+            "      2,\n",
+            "      1\n",
+            "    ],\n",
+            "    v => [z, x, y]\n",
+            "  },\n",
+            "  #{c => d, e => #{f => f, g => h}} => #{i => j, k => #{l => m, n => o}}\n",
+            "}">>, to_binary(#{a => b, #{c => d, e => #{f => f, g => h}} => #{i => j, k => #{l => m, n => o}},
+             p => r, s => #{ t => [1, 2, 3], u => [2, 1], v => [z, x, y]}},
+                [[#{c => d, e => #{f => f, g => h}}], [s, [t, v]]]))
     ].
 
+
+%%
+%%
+%%
+filter_no_expands_test_() ->
+    [
+        ?_assertEqual(undefined,                     filter_no_expands(1, [[2],[1],[3]])),
+        ?_assertEqual(undefined,                     filter_no_expands(1, [[2,1,3],[1],[1,2,3]])),
+        ?_assertEqual(undefined,                     filter_no_expands(1, [[1,2,3],[1],[2,1,3]])),
+        ?_assertEqual([[2,3],[3,3],[1,1],[2,2],[4]], filter_no_expands(1, [[1,2,3],[2,1,3],['*',3,3],[{0,5},1,1],[[{2,4},1],2,2],[[{2,4},{0,1}],4]]))
+    ].
 
 -endif.
