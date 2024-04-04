@@ -42,47 +42,32 @@ to_binary_indent(Binary, _Indent) when is_binary(Binary) ->
 
 to_binary_indent(List, Indent) when is_list(List) ->
     case {List, io_lib:printable_unicode_list(List)} of
-        {[], _} ->  % Normally, second element should be 'true'
-            <<"[]">>;
-        {_, true} ->
+        {[_|_], true} ->
             ListBin = erlang:list_to_binary(List),
             <<"\"", ListBin/binary, "\"">>;
-        {[Elem], false} ->
-            ElemBin = to_binary_indent(Elem, Indent),
-            <<"[", ElemBin/binary, "]">>;
-        {[_,_|_], false} ->
-            IndentThisBin = get_indent(Indent),
-            IndentNextBin = get_indent(Indent+1),
-            ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
-                ElemBin = to_binary_indent(Elem, Indent+1),
-                <<IndentNextBin/binary, ElemBin/binary>>
-            end, List))),
-            <<"[\n", ListConverted/binary, "\n", IndentThisBin/binary, "]">>
+        {_, _} ->
+            to_binary_indent_list(List, <<"[">>, <<"]">>, fun to_binary_indent/2, Indent)
     end;
 
 to_binary_indent(Tuple, Indent) when is_tuple(Tuple) ->
-    case erlang:size(Tuple) of
-        0 ->
-            <<"{}">>;
-        1 ->
-            {Elem} = Tuple,
-            ElemBin = to_binary_indent(Elem, Indent),
-            <<"{", ElemBin/binary, "}">>;
-        _ ->
-            IndentThisBin = get_indent(Indent),
-            IndentNextBin = get_indent(Indent+1),
-            TupleConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
-                ElemBin = to_binary_indent(Elem, Indent+1),
-                <<IndentNextBin/binary, ElemBin/binary>>
-            end, erlang:tuple_to_list(Tuple)))),
-            <<"{\n", TupleConverted/binary, "\n", IndentThisBin/binary, "}">>
-    end.
+    to_binary_indent_list(erlang:tuple_to_list(Tuple), <<"{">>, <<"}">>, fun to_binary_indent/2, Indent).
 
 
-to_binary_indent_converted(TermBin, IndentLength) ->
-    Indent = get_indent(IndentLength),
-    <<Indent/binary, TermBin/binary>>.
+to_binary_indent_list([], StartBin, EndBin, _ElemToBinFun, _Indent) ->
+    <<StartBin/binary, EndBin/binary>>;
 
+to_binary_indent_list([Elem], StartBin, EndBin, ElemToBinFun, Indent) ->
+    ElemBin = ElemToBinFun(Elem, Indent),
+    <<StartBin/binary, ElemBin/binary, EndBin/binary>>;
+
+to_binary_indent_list(List = [_,_|_], StartBin, EndBin, ElemToBinFun, Indent) ->
+    IndentThisBin = get_indent(Indent),
+    IndentNextBin = get_indent(Indent+1),
+    ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
+        ElemBin = ElemToBinFun(Elem, Indent+1),
+        <<IndentNextBin/binary, ElemBin/binary>>
+    end, List))),
+    <<StartBin/binary, "\n", ListConverted/binary, "\n", IndentThisBin/binary, EndBin/binary>>.
 
 
 get_indent(Count) ->
