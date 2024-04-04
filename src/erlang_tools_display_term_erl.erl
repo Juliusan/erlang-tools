@@ -28,52 +28,54 @@ to_binary(Term) ->
 %%% ============================================================================
 
 
-to_binary_indent(Atom, IndentLength) when is_atom(Atom) ->
-    to_binary_indent_converted(erlang:atom_to_binary(Atom), IndentLength);
+to_binary_indent(Atom, _Indent) when is_atom(Atom) ->
+    erlang:atom_to_binary(Atom);
 
-to_binary_indent(Integer, IndentLength) when is_integer(Integer) ->
-    to_binary_indent_converted(erlang:integer_to_binary(Integer), IndentLength);
+to_binary_indent(Integer, _Indent) when is_integer(Integer) ->
+    erlang:integer_to_binary(Integer);
 
-to_binary_indent(Float, IndentLength) when is_float(Float) ->
-    to_binary_indent_converted(erlang:float_to_binary(Float, [short]), IndentLength);
+to_binary_indent(Float, _Indent) when is_float(Float) ->
+    erlang:float_to_binary(Float, [short]);
 
-to_binary_indent(Binary, IndentLength) when is_binary(Binary) ->
-    to_binary_indent_converted(<<"<<\"", Binary/binary, "\">>">>, IndentLength);
+to_binary_indent(Binary, _Indent) when is_binary(Binary) ->
+    <<"<<\"", Binary/binary, "\">>">>;
 
-to_binary_indent(List, IndentLength) when is_list(List) ->
-    case List of
-        [] ->
-            to_binary_indent_converted(<<"[]">>, IndentLength);
-        [_|_] ->
-            case io_lib:printable_unicode_list(List) of
-                true ->
-                    ListBin = erlang:list_to_binary(List),
-                    to_binary_indent_converted(<<"\"", ListBin/binary, "\"">>, IndentLength);
-                false ->
-                    OpenConverted = to_binary_indent_converted(<<"[">>, IndentLength),
-                    CloseConverted = to_binary_indent_converted(<<"]">>, IndentLength),
-                    ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
-                        to_binary_indent(Elem, IndentLength+1)
-                    end, List))),
-                    <<OpenConverted/binary, "\n", ListConverted/binary, "\n", CloseConverted/binary>>
-            end
+to_binary_indent(List, Indent) when is_list(List) ->
+    case {List, io_lib:printable_unicode_list(List)} of
+        {[], _} ->  % Normally, second element should be 'true'
+            <<"[]">>;
+        {_, true} ->
+            ListBin = erlang:list_to_binary(List),
+            <<"\"", ListBin/binary, "\"">>;
+        {[Elem], false} ->
+            ElemBin = to_binary_indent(Elem, Indent),
+            <<"[", ElemBin/binary, "]">>;
+        {[_,_|_], false} ->
+            IndentThisBin = get_indent(Indent),
+            IndentNextBin = get_indent(Indent+1),
+            ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
+                ElemBin = to_binary_indent(Elem, Indent+1),
+                <<IndentNextBin/binary, ElemBin/binary>>
+            end, List))),
+            <<"[\n", ListConverted/binary, "\n", IndentThisBin/binary, "]">>
     end;
 
-to_binary_indent(Tuple, IndentLength) when is_tuple(Tuple) ->
+to_binary_indent(Tuple, Indent) when is_tuple(Tuple) ->
     case erlang:size(Tuple) of
         0 ->
-            to_binary_indent_converted(<<"{}">>, IndentLength);
+            <<"{}">>;
         1 ->
             {Elem} = Tuple,
-            ElemBin = to_binary_indent(Elem, IndentLength),
+            ElemBin = to_binary_indent(Elem, Indent),
             <<"{", ElemBin/binary, "}">>;
         _ ->
-            OpenConverted = to_binary_indent_converted(<<"{">>, IndentLength),
-            CloseConverted = to_binary_indent_converted(<<"}">>, IndentLength),
-            ListConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
-                to_binary_indent(Elem, IndentLength+1)
+            IndentThisBin = get_indent(Indent),
+            IndentNextBin = get_indent(Indent+1),
+            TupleConverted = erlang:iolist_to_binary(lists:join(<<",\n">>, lists:map(fun(Elem) ->
+                ElemBin = to_binary_indent(Elem, Indent+1),
+                <<IndentNextBin/binary, ElemBin/binary>>
             end, erlang:tuple_to_list(Tuple)))),
-            <<OpenConverted/binary, "\n", ListConverted/binary, "\n", CloseConverted/binary>>
+            <<"{\n", TupleConverted/binary, "\n", IndentThisBin/binary, "}">>
     end.
 
 
@@ -125,7 +127,55 @@ to_binary_test_() ->
             "  2.3,\n",
             "  <<\"sula\">>,\n",
             "  sula\n",
-            "]">>, to_binary([321, "alus", [alus, 456, 1.2, "sula", <<"alus">>, {555, "geras"}], 2.3, <<"sula">>, sula]))
+            "]">>, to_binary([321, "alus", [alus, 456, 1.2, "sula", <<"alus">>, {555, "geras"}], 2.3, <<"sula">>, sula])),
+        ?_assertEqual(<<"[[]]">>, to_binary([[]])),
+        ?_assertEqual(<<"[{}]">>, to_binary([{}])),
+        ?_assertEqual(<<"{[]}">>, to_binary({[]})),
+        ?_assertEqual(<<"{{}}">>, to_binary({{}})),
+        ?_assertEqual(<<"[[alus]]">>, to_binary([[alus]])),
+        ?_assertEqual(<<"[{123}]">>, to_binary([{123}])),
+        ?_assertEqual(<<"{[\"labas\"]}">>, to_binary({["labas"]})),
+        ?_assertEqual(<<"{{2.3}}">>, to_binary({{2.3}})),
+        ?_assertEqual(<<"[[\n  alus,\n  123\n]]">>, to_binary([[alus, 123]])),
+        ?_assertEqual(<<"[{\n  123,\n  \"labas\"\n}]">>, to_binary([{123, "labas"}])),
+        ?_assertEqual(<<"{[\n  \"labas\",\n  2.3\n]}">>, to_binary({["labas", 2.3]})),
+        ?_assertEqual(<<"{{\n  2.3,\n  alus\n}}">>, to_binary({{2.3, alus}})),
+        ?_assertEqual(<<
+            "{\n",
+            "  a,\n",
+            "  b,\n",
+            "  {{{d}}},\n",
+            "  c\n",
+            "}">>, to_binary({a,b,{{{d}}},c})),
+        ?_assertEqual(<<
+            "{\n",
+            "  a,\n",
+            "  b,\n",
+            "  {{{\n",
+            "    d,\n",
+            "    e,\n",
+            "    f\n",
+            "  }}},\n",
+            "  c\n",
+            "}">>, to_binary({a,b,{{{d,e,f}}},c})),
+        ?_assertEqual(<<
+            "[\n",
+            "  a,\n",
+            "  b,\n",
+            "  [[[d]]],\n",
+            "  c\n",
+            "]">>, to_binary([a,b,[[[d]]],c])),
+        ?_assertEqual(<<
+            "[\n",
+            "  a,\n",
+            "  b,\n",
+            "  [[[\n",
+            "    d,\n",
+            "    e,\n",
+            "    f\n",
+            "  ]]],\n",
+            "  c\n",
+            "]">>, to_binary([a,b,[[[d,e,f]]],c]))
     ].
 
 
