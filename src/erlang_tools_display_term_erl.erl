@@ -4,13 +4,19 @@
 -module(erlang_tools_display_term_erl).
 -compile([{parse_transform, lager_transform}]).
 -export([to_binary/1, to_binary/2]).
+-export([to_file/2, to_file/3]).
+-export([to_console/1, to_console/2]).
 
 %%
 %%
 %%
 -ignore_xref([
-    {?MODULE, to_binary, 1},    % Can be called by external users
-    {?MODULE, to_binary, 2}     % Can be called by external users
+    {?MODULE, to_binary,  1},   % Can be called by external users
+    {?MODULE, to_binary,  2},   % Can be called by external users
+    {?MODULE, to_file,    2},   % Can be called by external users
+    {?MODULE, to_file,    3},   % Can be called by external users
+    {?MODULE, to_console, 1},   % Can be called by external users
+    {?MODULE, to_console, 2}    % Can be called by external users
 ]).
 
 
@@ -66,7 +72,8 @@
 %%  which should not be expanded to separate lines. All the paths listed in this
 %%  parameter will be displayed on a single line, ignoring the amount of nested
 %%  lists/tuples/maps.
-%%  See: test cases in `to_binary_test_/0'
+%%  See: test cases in `to_binary_test_/0'.
+%%  NOTE: 'file:consult/1' can be used to read a term from file.
 %%
 -spec to_binary(
     Term :: term()
@@ -77,13 +84,60 @@ to_binary(Term) ->
     to_binary(Term, []).
 
 -spec to_binary(
-    Term :: term(),
+    Term      :: term(),
     NoExpands :: [ term_path() ]
 ) ->
     binary().
 
 to_binary(Term, NoExpands) ->
     to_binary_indent(Term, 0, NoExpands).
+
+
+%%
+%%  Converts term to pretty formatted binary and writes the result to file.
+%%  See: `to_binary/1' and `to_binary/2'.
+%%
+-spec to_file(
+    FileName :: string(),
+    Term     :: term()
+) ->
+    ok | {error, Reason :: term()}.
+
+to_file(FileName, Term) ->
+    to_file(FileName, Term, []).
+
+-spec to_file(
+    FileName  :: string(),
+    Term      :: term(),
+    NoExpands :: [ term_path() ]
+) ->
+    ok | {error, Reason :: term()}.
+
+to_file(FileName, Term, NoExpands) ->
+    file:write_file(FileName, to_binary(Term, NoExpands)).
+
+
+%%
+%%  Converts term to pretty formatted binary and outputs it to stdout.
+%%  See: `to_binary/1' and `to_binary/2'.
+%%
+-spec to_console(
+    Term     :: term()
+) ->
+    ok.
+
+to_console(Term) ->
+    to_console(Term, []).
+
+-spec to_console(
+    Term      :: term(),
+    NoExpands :: [ term_path() ]
+) ->
+    ok.
+
+to_console(Term, NoExpands) ->
+    io:fwrite("~s.~n", [to_binary(Term, NoExpands)]).
+
 
 
 %%% ============================================================================
